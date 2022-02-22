@@ -48,7 +48,8 @@ def save_csv(df, filename):
     return True
 
 
-def retrieve_first_table(url, table_idx=0, header_span=False, th_row=0, prefix_col=0):
+def retrieve_first_table(url, table_idx=0, header_span=False, th_row=0, 
+                         prefix_col=0, override_column=None, td_span=False):
   """
   Scrape the first table on the page at url.
   """
@@ -59,16 +60,19 @@ def retrieve_first_table(url, table_idx=0, header_span=False, th_row=0, prefix_c
   table = soup.find_all("table")[table_idx]
   
   # Find column names
-  header = table.thead.find_all('tr')[th_row].find_all('th')
-  if header_span:
-    colnames = [th.find_all('span')[0].text for th in header]
+  if override_column is None:
+    header = table.thead.find_all('tr')[th_row].find_all('th')
+    if header_span:
+      colnames = [th.find_all('span')[0].text for th in header]
+    else:
+      colnames = [th.text for th in header]
+    colnames = ['']*prefix_col + colnames
+    # Change column names into snake format
+    colnames = [format_snake(c) for c in colnames]
+    # Make sure the column names are unique
+    colnames = create_unique_strings(colnames)
   else:
-    colnames = [th.text for th in header]
-  colnames = ['']*prefix_col + colnames
-  # Change column names into snake format
-  colnames = [format_snake(c) for c in colnames]
-  # Make sure the column names are unique
-  colnames = create_unique_strings(colnames)
+    colnames = override_column
   
   df = pd.DataFrame(columns=colnames)
 
@@ -76,10 +80,39 @@ def retrieve_first_table(url, table_idx=0, header_span=False, th_row=0, prefix_c
   for tr in table.tbody.find_all('tr'):    
       # Find all data for each column
       columns = tr.find_all('td')
-      if (columns != []):
+      if columns == []:
+        continue
+      if td_span:
+        row_dict = {}
+        for i in range(len(columns)):
+          spans = columns[i].find_all('span')
+          if spans:
+            value = '-'.join([span.text.strip() for span in spans])
+          else:
+            value = columns[i].text.strip()
+          row_dict[colnames[i]] = value
+      else:
           row_dict = {colnames[i]: columns[i].text.strip() for i in range(len(columns))}
-          df = df.append(row_dict, ignore_index=True)
+      df = df.append(row_dict, ignore_index=True)
   return df
+
+
+def get_match_summary():
+    """
+    Get the match summary for the round robin.
+    """
+    match_summary_url = "https://en.volleyballworld.com/en/vnl/2019/women/resultsandranking/round1"
+    colnames = ['number', 'date', 'teams', 'sets', 'set1_point', 'set2_point', 
+                'set3_point', 'set4_point', 'set5_point', 
+                'pionts', 'time', 'audience']
+    match_summary_df = retrieve_first_table(match_summary_url, override_column=colnames, td_span=True, table_idx=1)
+    for i in range(1, 6):
+        # Clean the set point columns
+        match_summary_df['set%s_point' % i] = match_summary_df['set%s_point' % i]\
+            .apply(lambda x: (x[:2] if x[1].isnumeric() else x[0]) + '-' + 
+                (x[-2:] if x[-2].isnumeric() else x[-1]) if x!='-' else x)
+    return match_summary_df
+
 
 def save_best_players():
     """
@@ -155,6 +188,9 @@ def main():
     save_csv(team_rank_df, 'team_rank.csv')
 
     save_best_players()
+
+    match_summary_df = get_match_summary()
+    save_csv(match_summary_df, 'round_robin.csv')
 
 if __name__ == '__main__':
     main()
