@@ -4,6 +4,8 @@ import pandas as pd
 import os
 
 CURDIR = './'
+BASE_URL = 'https://en.volleyballworld.com'
+
 TEAM_TO_ABBR = {'china': 'chn', 'belgium': 'bel', 'brazil': 'bra', 
                 'bulgaria': 'bul', 'dominican republic': 'dom', 
                 'germany': 'ger', 'italy': 'ita', 'japan': 'jpn', 
@@ -181,10 +183,59 @@ def get_player_bio_df():
     return player_all_df
 
 
+def get_position(url):
+    """
+    Get info about player position from url.
+    """
+    data = requests.get(url).text
+    soup = BeautifulSoup(data, "lxml")
+    position = soup.find_all("div", class_='col-1-3')[0].find_all('li')[0].find_all('span')[1].text.strip()
+    return position
+
+
+def get_player_href(url):
+    """
+    Get the list of links for each player page.
+    """
+    data = requests.get(url).text
+    soup = BeautifulSoup(data, "lxml")
+    table = soup.find_all('table')[0]
+    a_s = table.find_all('a', href=True)
+    hrefs = [BASE_URL + a.get('href') for a in a_s]
+    return hrefs
+
+
+def get_player_bio_df():
+    """
+    Save player bio into a csv file.
+    """
+    player_all_df = pd.DataFrame()
+    for team in TEAM_TO_ABBR:
+        abbr = TEAM_TO_ABBR[team]
+        link_part = '%s-%s' % (abbr, team)
+
+        team_url = "https://en.volleyballworld.com/en/vnl/2019/women/teams/%s/team_roster" % link_part
+        player_df = retrieve_first_table(team_url, header_span=False)
+        # Drop index
+        player_df.drop(player_df.columns[0], axis=1, inplace=True)
+        # Insert a team column
+        player_df['team'] = abbr.upper()
+
+        # Get player position
+        player_links = get_player_href(team_url)
+        positions = [get_position(url) for url in player_links]
+        player_df['position'] = positions
+
+        player_all_df = pd.concat([player_all_df, player_df])
+
+    return player_all_df
+
+
 def main():
     player_df = get_player_bio_df()
-    team_rank_df = get_team_rank_with_match()
     save_csv(player_df, 'player_bio.csv')
+
+    team_rank_df = get_team_rank_with_match()
     save_csv(team_rank_df, 'team_rank.csv')
 
     save_best_players()
