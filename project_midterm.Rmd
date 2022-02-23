@@ -1,0 +1,149 @@
+---
+title: "JSC370 Midterm Project"
+author: "Zhengdan Li"
+date: "20/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introduction
+
+```{r load-data}
+library(data.table)
+library(dplyr)
+library(leaflet)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(gtable)
+library(mgcv)
+library("GGally")
+
+# Helper function
+slice_back <- function(s, n) {
+  sub = substr(s, nchar(s)-n+1, nchar(s))
+  return(sub)
+}
+
+# Read in the player and team data
+scorers <- data.table::fread("vnl_2019/best-scorers.csv")
+spikers <- data.table::fread("vnl_2019/best-spikers.csv")
+blockers <- data.table::fread("vnl_2019/best-blockers.csv")
+diggers <- data.table::fread("vnl_2019/best-diggers.csv")
+setters <- data.table::fread("vnl_2019/best-setters.csv")
+
+bio <- data.table::fread("vnl_2019/player_bio.csv")
+team_rank <- data.table::fread("vnl_2019/team_rank.csv")
+round_robin <- data.table::fread("vnl_2019/round_robin.csv")
+
+# Check data type and dimension 
+str(scorers)
+str(bio)
+str(team_rank)
+str(round_robin)
+summary(scorers)
+summary(bio)
+summary(team_rank)
+summary(round_robin)
+```
+
+
+## 2. Methods
+
+```{r wrangling}
+## bio
+## Create numerical variables - bmi, world_game, age
+bio[, bmi := round(weight / (height/100)**2, 1)]
+bio[, world_selection := world_championships + olympic_games]
+# Take the last four char from birth date and convert to int as birth year
+bio[, birth_year := strtoi(slice_back(birthdate, 4))]
+# Calculate age
+bio[, age:= 2019 - birth_year]
+# Create a indicator for captain: name has '\nc' at the end
+bio[, is_captain := fifelse(slice_back(name, 2) == '\nc', 1, 0)]
+# Remove char from end of name
+bio[, name := gsub("\nc", "", name)]
+# Rename ambiguous columns before merging
+setnames(bio, 'spike', 'spike_height')
+setnames(bio, 'block', 'block_height')
+setnames(bio, 'total', 'total_selections')
+# Keep only relevant columns
+
+## scorers
+# Rename columns
+setnames(scorers, 'total', 'total_score')
+setnames(scorers, 'rank', 'score_rank')
+# Drop column that's not interesting
+scorers <- scorers[, !"shirtnumber"]
+
+# Merge player scores with bio
+# look for association between players' individual scores and their ability
+players <- merge(x = bio[, .(name, team, position, age, height, weight, bmi,
+                             spike_height, block_height,
+                             total_selections, is_captain)], 
+                 y = scorers, 
+                 all.x = T, all.y = F, 
+                 by=c("name", 'team'))
+# Check for NAs
+players[is.na(total_score), .N]   #155
+# Check row number doesn't change so no players have the same name
+print(nrow(players) == nrow(bio))
+# Impute missing values   #TODO: if merge all tables, first drop rows with all NAs
+players <- players %>%
+  group_by(position) %>%
+  mutate(
+    total_score = coalesce(total_score, round(mean(total_score, na.rm=TRUE))),
+    attacks = coalesce(attacks, round(mean(attacks, na.rm=TRUE))),
+    blocks = coalesce(total_score, round(mean(blocks, na.rm=TRUE))),
+    serves = coalesce(total_score, round(mean(serves, na.rm=TRUE)))
+  )
+players <-data.table(players)
+```
+
+
+## 3. Preliminary Results
+
+```{r summary table}
+# Summary statistics, group by position
+position_summary <- players[, .(
+  average_total_score = round(mean(total_score)),
+  average_attacks = round(mean(attacks)),
+  average_blocks = round(mean(blocks)),
+  average_height = round(mean(height)),
+  average_spike_height = round(mean(spike_height)),
+  number = .N
+), by=position]
+players[position == 'Universal']
+position_summary <- position_summary[position != 'Universal']
+position_summary
+
+# Summary statistics, group by team
+team_player_summary <- players[, .(
+  average_age = round(mean(age)),
+  average_height = round(mean(height)),
+  average_total_selections = round(mean(total_selections)),
+  max_score = max(total_score),
+  std_score = round(sd(total_score), 2)
+), by=team]
+team_player_summary
+team_summary <- merge(x=team_rank[, .(team, rank, match_win, 
+                                      set_ratio, point_ratio)], 
+                      y=team_player_summary, by='team')
+team_summary[order(rank)]
+```
+
+```{r individual correlation}
+ggpairs(players[, .(total_score, height, spike_height)], 
+        columnLabels = c("Total Score", "Height", "Spike Height"))
+ggpairs(players[, .(total_score, total_selections, age)], 
+        columnLabels = c("Total Score", "Number of Selections", "Age"))
+
+# Linear regression wrt height adjusted for age
+```
+
+## 4. Conclusion
+
+
