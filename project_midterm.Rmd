@@ -22,11 +22,14 @@ library(gtable)
 library(mgcv)
 library("GGally")
 
-# Helper function
+# Helper functions
+# Slice from end of the string
 slice_back <- function(s, n) {
   sub = substr(s, nchar(s)-n+1, nchar(s))
   return(sub)
 }
+# Mode
+fmode <- function(x) unique(x)[which.max(table(x))]
 
 # Read in the player and team data
 scorers <- data.table::fread("vnl_2019/best-scorers.csv")
@@ -53,8 +56,29 @@ summary(round_robin)
 
 ## 2. Methods
 
-```{r wrangling}
+```{r cleaning & wrangling}
 ## bio
+# Rename ambiguous columns before merging
+setnames(bio, 'spike', 'spike_height')
+setnames(bio, 'block', 'block_height')
+setnames(bio, 'total', 'total_selections')
+
+# Deal with outliers
+boxplot(bio$spike_height, main='Boxplot of spike height')
+bio[spike_height < 240]
+nrow(bio[spike_height >= block_height]) / nrow(bio)
+bio[, spike_height := fifelse(spike_height < 150, block_height, spike_height)]
+
+# Only one player has a universal position, replace with the most occurred position
+bio[position == 'Universal']
+bio[, position := fifelse(position == 'Universal', fmode(position), position)]
+
+# Make position name consistent
+bio[, position := fifelse(position == 'Middle blocker', 
+                          'Middle Blocker', 
+                          fifelse(position == 'Opposite spiker',
+                                  'Opposite Spiker', position))]
+
 ## Create numerical variables - bmi, world_game, age
 bio[, bmi := round(weight / (height/100)**2, 1)]
 bio[, world_selection := world_championships + olympic_games]
@@ -66,11 +90,8 @@ bio[, age:= 2019 - birth_year]
 bio[, is_captain := fifelse(slice_back(name, 2) == '\nc', 1, 0)]
 # Remove char from end of name
 bio[, name := gsub("\nc", "", name)]
-# Rename ambiguous columns before merging
-setnames(bio, 'spike', 'spike_height')
-setnames(bio, 'block', 'block_height')
-setnames(bio, 'total', 'total_selections')
 # Keep only relevant columns
+
 
 ## scorers
 # Rename columns
@@ -101,6 +122,17 @@ players <- players %>%
     serves = coalesce(total_score, round(mean(serves, na.rm=TRUE)))
   )
 players <-data.table(players)
+
+## Team
+# Rename team rank
+setnames(team_rank, 'rank', 'team_rank')
+
+# Merge team info together with player info
+team_players <- merge(x=team_rank[, .(team, team_rank, match_win, 
+                                      set_ratio, team_full)], 
+                      y=players[, .(team, age, position, height, 
+                                    total_selections, total_score)],
+                      by='team')
 ```
 
 
@@ -116,32 +148,182 @@ position_summary <- players[, .(
   average_spike_height = round(mean(spike_height)),
   number = .N
 ), by=position]
-players[position == 'Universal']
-position_summary <- position_summary[position != 'Universal']
-position_summary
+position_summary[order(-average_total_score)]
 
+# Violin plot of total score by position
+players %>%
+  ggplot() + 
+    aes(y = total_score, x = 1, fill = position) +
+    geom_violin() +
+    facet_wrap(~position, nrow=1) +
+    scale_fill_brewer(palette = "Set2") +
+    labs(title="Distribution of Player Score Based on Positions",
+         x="", y="Total Score") +
+    theme_light() +
+    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+```
+
+```{r individual correlation}
+cor.test(players$spike_height, players$block_height) #0.77
+ggpairs(players[, .(total_score, height, spike_height)], 
+        title="Pairwise Correlation Among Player Height, Spike Height, and Total Score",
+        columnLabels = c("Total Score", "Height", "Spike Height"))
+ggpairs(players[, .(total_score, total_selections, age)], 
+        title="Pairwise Correlation Among Player Age, Number of Selections, and Total Score", 
+        columnLabels = c("Total Score", "Number of Selections", "Age"))
+
+# Linear regression wrt height
+# total selection is not significant
+score_height_fit <- lm(total_score ~ spike_height, data=players)
+summary(score_height_fit)
+par(mfrow=c(2,2))
+plot(score_height_fit)
+
+# Regression lines
+# Note: Strongest correlation between total score and spike height 
+# among opposite spikers and outside hitters
+players %>%
+  ggplot() +
+  # Color points by position
+  aes(x = spike_height, y = total_score, color=position, alpha=0.5) +
+  geom_jitter() +
+  # Fit a linear regression line by region
+  stat_smooth(method=lm, formula = y~x) + 
+  labs(title="Regression Lines of Total Score vs Spike Height by position") + 
+  facet_wrap(~position) +
+  guides(color = 'none', alpha = 'none') +
+  theme_light() + 
+  scale_color_brewer(palette = "Set2")
+```
+
+
+```{r team and individual correlation}
 # Summary statistics, group by team
 team_player_summary <- players[, .(
   average_age = round(mean(age)),
   average_height = round(mean(height)),
   average_total_selections = round(mean(total_selections)),
   max_score = max(total_score),
+  average_score = round(mean(total_score)),
   std_score = round(sd(total_score), 2)
 ), by=team]
-team_player_summary
-team_summary <- merge(x=team_rank[, .(team, rank, match_win, 
-                                      set_ratio, point_ratio)], 
+team_summary <- merge(x=team_rank[, .(team, team_rank, match_win, 
+                                      set_ratio, team_full)], 
                       y=team_player_summary, by='team')
-team_summary[order(rank)]
+knitr::kable(team_summary[order(team_rank)], 
+             caption="Summary Statistics of 16 Teams")
+
+# Correlation
+cor.test(team_summary$max_score, team_summary$set_ratio)
+cor.test(team_summary$average_score, team_summary$set_ratio)
+cor.test(team_summary$std_score, team_summary$set_ratio)
+
+
+# Linear regression of set ratio with player max score and average score
+win_max_fit <- lm(set_ratio ~ max_score, data=team_summary)
+summary(win_max_fit)
+par(mfrow=c(2,2))
+plot(win_max_fit)
+
+win_avg_fit <- lm(set_ratio ~ average_score, data=team_summary)
+summary(win_avg_fit)
+par(mfrow=c(2,2))
+plot(win_avg_fit)
 ```
 
-```{r individual correlation}
-ggpairs(players[, .(total_score, height, spike_height)], 
-        columnLabels = c("Total Score", "Height", "Spike Height"))
-ggpairs(players[, .(total_score, total_selections, age)], 
-        columnLabels = c("Total Score", "Number of Selections", "Age"))
 
-# Linear regression wrt height adjusted for age
+
+```{r team plot}
+team_summary %>%
+  ggplot() +
+  # Color points by position
+  aes(x = average_score, y = set_ratio) +
+  geom_jitter() +
+  # Fit a linear regression line by region
+  stat_smooth(method=lm, formula = y~x) + 
+  labs(title="Regression Lines of Set Ratio vs Average Player Score") + 
+  theme_light() + 
+  scale_color_brewer(palette = "Set2")
+
+# Boxplot of player total score by team
+team_in_order <- team_rank[, team_full]
+transform(team_players,
+          team_full=factor(team_full,levels=team_in_order)) %>%
+  ggplot() + 
+    aes(y = total_score, x = 1) +
+    geom_boxplot() +
+    coord_flip() +
+    facet_wrap(~team_full, nrow=4) +
+    labs(title="Boxplots of Player Score in 16 Teams",
+         x="", y="Total Score") +
+    theme_light() +
+    theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())
+
+# Hist of total selection by top 5 teams
+team_in_order <- team_rank[, team_full]
+transform(team_players,
+          team_full=factor(team_full,levels=team_in_order))[team_rank <= 5] %>% 
+  ggplot(aes(x=total_selections, fill=team_full)) +
+  geom_histogram(binwidth = 50, position = 'dodge2') +
+  labs(title="Histogram of Selections in the Top 5 Teams", 
+       x="Number of Selection", y="Count") +
+  scale_fill_brewer(palette = "Set2", name = "Team") +
+  theme_light() 
+
+# Line plot of std_score vs rank / heatmap
+
+```
+
+
+
+```{r captain, out.width="80%"}
+# Filter captains in the 16 teams
+captains <- players[is_captain == 1]
+mean(captains$age)
+mean(captains$total_selections)
+mean(captains$total_score)
+boxplot(captains$age)
+
+# Pie chart
+captain_position <- captains[, .(number = .N), by=position]
+captain_position <- 
+  captain_position %>% 
+  arrange(desc(position)) %>%
+  mutate(prop = number / sum(captain_position$number) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+captain_pie <- captain_position %>%
+  ggplot(aes(x="", y=prop, fill=position)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(y = ypos, label = number), color = "white", size=4) +
+  scale_fill_brewer(palette="Set2") +
+  theme_void()
+# Histogram of captains' scores
+captain_hist <- captains %>% 
+  ggplot(aes(x=total_score, fill=position)) +
+  geom_histogram(binwidth = 50) +
+  labs(title="Histogram of Captains' Total Score by Position", 
+       x="Total Score", y="Count") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_light() +
+  guides(color='none') +
+  theme(legend.position = 'none')
+grid.arrange(captain_pie, captain_hist, ncol=2)
+
+#TODO: Score rank for captain within each team
+captains$score_rank
+
+```
+
+
+```{r position plot}
+# composition of positions in the best player rank
+```
+
+
+```{r position interaction within team}
+
 ```
 
 ## 4. Conclusion
