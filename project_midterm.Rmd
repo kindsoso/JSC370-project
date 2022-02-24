@@ -1,7 +1,7 @@
 ---
 title: "JSC370 Midterm Project"
 author: "Zhengdan Li"
-date: "20/02/2022"
+date: "03/03/2022"
 output: html_document
 ---
 
@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## 1. Introduction
 
-```{r load-data}
+```{r load-data, include=FALSE}
 library(data.table)
 library(dplyr)
 library(leaflet)
@@ -30,6 +30,10 @@ slice_back <- function(s, n) {
 }
 # Mode
 fmode <- function(x) unique(x)[which.max(table(x))]
+
+# Position order constant
+position_levels <- c("Opposite Spiker", "Outside Hitter", "Middle Blocker",
+       "Setter", "Libero")
 
 # Read in the player and team data
 scorers <- data.table::fread("vnl_2019/best-scorers.csv")
@@ -53,10 +57,54 @@ summary(team_rank)
 summary(round_robin)
 ```
 
+Volleyball is among the most popular team sports around the world. The players and the audience enjoy it so much because of the strength, sportsmanship, and team collaboration demonstrated in the game. However, one may wonder that, to what extent is volleyball a team sport? In other words, which between a player's capability and team cooperation contributes more to winning a game?
+
+This question further breaks down to the following subquestions to be discussed in this report:\
+- How much does the score a player wins in a game depend on her personal capacity, such as physical traits and experience?\
+- Is there a particular position or "ace" in the team critical for winning the game?\
+- Is there an association between the scores two team members at specific positions get in a game?\
+
+In this project, I analyzed data from the 2019 FIVB Volleyball Women's Nations League (VNL) to better understand the mechanisms of volleyball. Although the most recent VNL competition was held in 2021, available information on the players is not comprehensive. I then selected the second last competition, which was 2019 VNL as the game was cancelled in 2020. To learn the characteristics of as many teams as possible, I decided to focus on the preliminary round, where each of the 16 teams played against every other team once in the round-robin stage. The player roster dataset contains the basic information of the 400 players from the 16 teams, such as the age, height, and the position they play in the team. The team rank dataset contains the rank of the teams in terms of how many matches they won. Lastly, the best player datasets contain the summary of the player's spike, block, set, and dig through the tournament, respectively. 
+
+### Terminology
+
+Before diving into the methods, some volleyball terms relevant to the analysis are listed as follows. [[Reference](https://www.volleyball.com/volleyball-101/volleyball-terms/)]\
+- **Match**: Volleyball matches are a made up of sets. Match play on VNL consists of competing until one team wins 3 out of 5 sets.\
+- **Set (game)**: A volleyball set is played to a 25 points. Sets must be won by at least 2 points.\
+- **Dig**: Passing a rapidly hit ball from the rally (potentially to the setter).\
+- **Set**: The tactical skill in which a ball is directed to a point where a player can spike it into the opponent's court.\
+- **Spike**: The offensive action of hitting the ball. The attempt by one team to terminate the play by hitting the ball to the floor on the opponent's side. Also "attack".\
+- **Middle Blocker**: Middle blockes hit balls set at the net in the middle of the court. Middle blockers are commonly used as a decoy to freeze or confuse the opposing teams blockers.\
+- **Outside Hitter**: Outside hitters are usually the primary attackers on the team. These hitters attack balls that are set to the left side of the court.\
+- **Setter**: Setters have the 2nd of 3 contacts of the ball and “set” the ball with an “Overhand Pass” for a attacker to hit.\
+- **Libero**: Liberoes serves as defensive specialists on the team who usually "dig" with the 1st of 3 contacts of the ball. \
+- **Opposite Spiker**: Opposite hitters, also know as right-side hitters, is considered the most versatile because they can excel on offense and defense.
 
 ## 2. Methods
 
-```{r cleaning & wrangling}
+### 2.1 Data Source
+The data was retrieved by web scraping at [this link](https://en.volleyballworld.com/en/vnl/2019/). The Python library Beautiful Soup was used to pull the data from the web pages. The Python script and fetched datasets can be viewed on [this GitHub repository](https://github.com/Avery7Li/JSC370-project/tree/master).
+
+### 2.2 Tools for Exploration
+I read the datasets into data tables. The data cleaning and wrangling operations were completed using primarily data.table methods. Most figures preseted in this report were created using ggplot2. The GGally library was used to generate the pairwise correlation plots.
+
+### 2.3 Data Cleaning
+After the datasets are ready, I started exploratory data analysis. The team rank data table has 16 rows and 19 columns, which is expected as there are 16 teams in the tournament. The player bio data table contains 400 rows for 400 players and 13 columns, while the best scorer data table contains 245 rows. This is because many substitute players did not get a chance to play or score and were not included in the ranking. 
+
+A further look into the variables revealed some issues with the original data table For the bio data table, three outliers of `spike height` lower than 240cm were observed from the simple boxplot. It turned out two of them are from liberoes with height 162, which was reasonable because libero is the position that has the least requirement of height. However, the third outlier with value 130cm comes from a middle blocker of height 192cm, which is likely a mistake. Thus, I replaced the 130cm by 292cm, which is the block height from the same player. When I looked at the position variable from the bio data table, I saw that only one player has a position named "Universal" which is not among the positions introduced in the previous terminology. The player was from the DOM team and had a total score of 93. I then substituted her position by the mode position, outside hitter. In addition, the cases of the player position is not consistent. I standardized them to capital cases.
+
+### 2.4 Data Wrangling
+
+I noticed that some names on the bio data table had a letter "c" preceded by a newline at the end of the string. As I confirmed on the website, the "c" indicates that the player was the captain of the team. There were 16 such names as the competition had 16 team participants. I created a new indicator variable `is_captain` with value 0 and 1 before removing the suffix from the name string.
+
+`age` was created as a new numerical variable. I extracted the year from the `birthdate` variable, converted it into an integer value, and subtracted it from year 2019 to calculate a player's age at the time of the competition.
+
+Before merging the data tables together, I renamed the ambiguous columns with specific names. For example, variables called `total` were both present in the best scorer and bio datasets, but they represent total scorer and the number of times a player had been selected for competitions, respectively.
+
+Next, I merged the bio and best player data tables using the player name. The combined data table still has 400 rows - Luckily, there were not two players with the same name. However, 155 rows have NA values in `total score` as previously we saw bio and best scorers have different row numbers. I imputed the missing numerical values with average within the variable `position` because players from the same position are more likely to have similar scores. Then, to prepare for the later investigation of the association between player performance and team result, I merged the newly generated player data table with the team rank data table. This time, no missing values are introduced to the combined table.
+ 
+
+```{r cleaning & wrangling, include=FALSE}
 ## bio
 # Rename ambiguous columns before merging
 setnames(bio, 'spike', 'spike_height')
@@ -137,15 +185,28 @@ team_players <- merge(x=team_rank[, .(team, team_rank, match_win,
 
 ## 3. Preliminary Results
 
+#### 3.1 How much does the score a player wins in a game depend on her personal capacity, such as physical traits and experience?
 
-```{r individual correlation}
-cor.test(players$spike_height, players$block_height) #0.77
+Starting with the first question of interest, I focused on the variable `total score` as the measurement of performance, variables `height` and `spike height` for physical traits, and variables `age` and `total selection` (number of times the player had been selected to compete in championships) for the measurement of experience. The correlation between spike height and block height is as large as 0.89. I also found that the spike height is no smaller than the block height for all players, so I picked `spike height` as an indicator for jump height. 
+
+I created two sets of pairwise correlation plots of total score with physical measurements and experience measurements, respectively.
+
+```{r individual correlation plot, echo=FALSE, width="60%"}
 ggpairs(players[, .(total_score, height, spike_height)], 
         title="Pairwise Correlation Among Player Height, Spike Height, and Total Score",
         columnLabels = c("Total Score", "Height", "Spike Height"))
 ggpairs(players[, .(total_score, total_selections, age)], 
         title="Pairwise Correlation Among Player Age, Number of Selections, and Total Score", 
         columnLabels = c("Total Score", "Number of Selections", "Age"))
+```
+
+We can observe on the plot that there is a large correlation between spike height and height of value 0.725. The correlation between total score and spike height is significant as indicated by the three asterisks, and the correlation coefficient is 0.39. In terms of experience, the number of selections is significantly associated with age. The total score the player won during the competition is positively correlated with the number of selections. The correlation has a coefficient value of 0.135, which is relatively weak compared to that with spike height. However, the performance of a player is not associated with age as the correlation value is very close to zero.
+
+Then, I fitted a linear model to total score and spike height. The estimated coefficient of spike height is 1.42, which represents that an increment of 1cm in spike height will result in an increase of 1.42 points in a player's score. The p-value is $5.67\times 10^{-16}$ smaller than the significance level $\alpha=0.05$, so the estimate is statistically significant. The adjusted $R^2$ of the multiple linear regression model is 0.15, so about 15% of the variation in total score can be explained by the independent variables spike height. However, I identified some problems from the diagnostic plots. The line on the residual vs fitted graph is a little curved rather than horizontally straight. Some points on the tails from the Normal QQ plot fall off the line. Thus, the residuals are not normally distributed. The linear model might not be an ideal fit for `total score` and `spike height`.
+
+```{r individual lm, include=FALSE}
+cor.test(players$spike_height, players$block_height) #0.89
+cor.test(players$total_score, players$total_selections) #0.135
 
 # Linear regression wrt height
 # total selection is not significant
@@ -166,22 +227,31 @@ players %>%
   labs(title="Overall Regression Lines of Total Score vs Spike Height") + 
   theme_light() + 
   scale_color_brewer(palette = "Set2")
+```
+
+I visualized the total scores versus spike height by five volleyball positions as follows. It is noticeable that the correlation is the strongest between total score and spike height among opposite spikers and outside hitters.
+
+```{r individual plot, echo=FALSE, width="60%"}
 # Note: Strongest correlation between total score and spike height 
 # among opposite spikers and outside hitters
-players %>%
+transform(players,
+          position=factor(position, levels=position_levels))%>%
   ggplot() +
   # Color points by position
   aes(x = spike_height, y = total_score, color=position, alpha=0.5) +
   geom_jitter() +
   # Fit a linear regression line by region
   stat_smooth(method=lm, formula = y~x) + 
-  labs(title="Regression Lines of Total Score vs Spike Height by Position") + 
+  labs(title="Scatterplots of Total Score vs Spike Height by Position") + 
   facet_wrap(~position) +
   guides(color = 'none', alpha = 'none') +
   theme_light() + 
   scale_color_brewer(palette = "Set2")
 ```
 
+Therefore, There is a moderate association between the points a player wins on a competition and her physical traits, especially with the jump height. The association is stronger among some volleyball positions and weaker among others. However, a player's performance is not necessarily related to her experience. Young players who have not participated in a lot of world championships can gain as many points as experienced players.
+
+#### 3.2 Is there a particular position or "ace" in the team critical for winning the game?
 
 ```{r team and individual correlation}
 # Summary statistics, group by team
@@ -296,6 +366,7 @@ players %>%
 # Linear regression of set_ratio with set and dig
 ```
 
+#### 2.3 Is there an association between the scores two team members at specific positions get in a game?
 
 ```{r position interaction within team}
 
