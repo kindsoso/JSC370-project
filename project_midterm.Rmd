@@ -92,7 +92,6 @@ bio[, is_captain := fifelse(slice_back(name, 2) == '\nc', 1, 0)]
 bio[, name := gsub("\nc", "", name)]
 # Keep only relevant columns
 
-
 ## scorers
 # Rename columns
 setnames(scorers, 'total', 'total_score')
@@ -138,31 +137,6 @@ team_players <- merge(x=team_rank[, .(team, team_rank, match_win,
 
 ## 3. Preliminary Results
 
-```{r summary table}
-# Summary statistics, group by position
-position_summary <- players[, .(
-  average_total_score = round(mean(total_score)),
-  average_attacks = round(mean(attacks)),
-  average_blocks = round(mean(blocks)),
-  average_height = round(mean(height)),
-  average_spike_height = round(mean(spike_height)),
-  number = .N
-), by=position]
-position_summary[order(-average_total_score)]
-
-# Violin plot of total score by position
-players %>%
-  ggplot() + 
-    aes(y = total_score, x = 1, fill = position) +
-    geom_violin() +
-    facet_wrap(~position, nrow=1) +
-    scale_fill_brewer(palette = "Set2") +
-    labs(title="Distribution of Player Score Based on Positions",
-         x="", y="Total Score") +
-    theme_light() +
-    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
-
-```
 
 ```{r individual correlation}
 cor.test(players$spike_height, players$block_height) #0.77
@@ -181,6 +155,17 @@ par(mfrow=c(2,2))
 plot(score_height_fit)
 
 # Regression lines
+# TODO: delete
+players %>%
+  ggplot() +
+  # Color points by position
+  aes(x = spike_height, y = total_score) +
+  geom_jitter() +
+  # Fit a linear regression line by region
+  stat_smooth(method=lm, formula = y~x) + 
+  labs(title="Overall Regression Lines of Total Score vs Spike Height") + 
+  theme_light() + 
+  scale_color_brewer(palette = "Set2")
 # Note: Strongest correlation between total score and spike height 
 # among opposite spikers and outside hitters
 players %>%
@@ -190,7 +175,7 @@ players %>%
   geom_jitter() +
   # Fit a linear regression line by region
   stat_smooth(method=lm, formula = y~x) + 
-  labs(title="Regression Lines of Total Score vs Spike Height by position") + 
+  labs(title="Regression Lines of Total Score vs Spike Height by Position") + 
   facet_wrap(~position) +
   guides(color = 'none', alpha = 'none') +
   theme_light() + 
@@ -235,6 +220,7 @@ plot(win_avg_fit)
 
 
 ```{r team plot}
+# Regression line of set ratio with player average score
 team_summary %>%
   ggplot() +
   # Color points by position
@@ -276,6 +262,45 @@ transform(team_players,
 ```
 
 
+```{r position summary}
+# Summary statistics, group by position
+position_summary <- players[, .(
+  average_total_score = round(mean(total_score)),
+  average_attacks = round(mean(attacks)),
+  average_blocks = round(mean(blocks)),
+  average_height = round(mean(height)),
+  average_spike_height = round(mean(spike_height)),
+  number = .N
+), by=position]
+position_summary[order(-average_total_score)]
+
+# Violin plot of total score by position
+players %>%
+  ggplot() + 
+    aes(y = total_score, x = 1, fill = position) +
+    geom_violin() +
+    facet_wrap(~position, nrow=1) +
+    scale_fill_brewer(palette = "Set2") +
+    labs(title="Distribution of Player Score Based on Positions",
+         x="", y="Total Score") +
+    theme_light() +
+    theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+```
+
+
+```{r position plot}
+# composition of positions in the top 10 best player rank - pie facet
+# how many best players in each team
+
+# Linear regression of set_ratio with set and dig
+```
+
+
+```{r position interaction within team}
+
+```
+
 
 ```{r captain, out.width="80%"}
 # Filter captains in the 16 teams
@@ -313,16 +338,6 @@ grid.arrange(captain_pie, captain_hist, ncol=2)
 
 #TODO: Score rank for captain within each team
 captains$score_rank
-
-```
-
-
-```{r position plot}
-# composition of positions in the best player rank
-```
-
-
-```{r position interaction within team}
 
 ```
 
